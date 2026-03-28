@@ -1,773 +1,563 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'next/navigation';
-import socket from '@/lib/socket';
+import { useEffect, useState, useRef } from "react";
+import { useParams } from "next/navigation";
+import socket from "@/lib/socket";
+import { Search, Plus, Send, Users, Settings, MoreVertical, Trash2, Archive, X } from "lucide-react";
 
-import {
-  getLocalStream,
-  createPeerConnection,
-  addLocalTracks,
-  createOffer,
-  handleAnswer,
-  handleICECandidate,
-  handleOffer,
-  createAnswer,
-} from '@/lib/webrtc';
+const initialUsers = [
+  "aaruser2@gmail.com",
+  "aaruser1@gmail.com",
+  "waghlucky63@gmail.com",
+];
 
-export default function CallPage() {
-  const params = useParams();
-  const userId = decodeURIComponent(params.userId);
-  const [targetUser, setTargetUser] = useState('');
-  const [localStream, setLocalStream] = useState(null);
-  const [remoteStream, setRemoteStream] = useState(null);
+export default function ChatPage() {
+  const { userId } = useParams();
+  const currentUser = decodeURIComponent(userId);
+  const chatEndRef = useRef(null);
+  const [selectedRecipient, setSelectedRecipient] = useState("");
+  const [message, setMessage] = useState("");
+  const [chats, setChats] = useState({});
+  const [availableUsers, setAvailableUsers] = useState(initialUsers);
+  const [showAddUser, setShowAddUser] = useState(false);
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [addUserError, setAddUserError] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
+  const [isTyping, setIsTyping] = useState(false);
 
-  // Call state management
-  const [isCallActive, setIsCallActive] = useState(false);
-  const [callDuration, setCallDuration] = useState(0);
-  const [isVideoEnabled, setIsVideoEnabled] = useState(true);
-  const [isAudioEnabled, setIsAudioEnabled] = useState(true);
-
-  // Add user modal state
-  const [showAddUserModal, setShowAddUserModal] = useState(false);
-  const [newUserEmail, setNewUserEmail] = useState('');
-  const [newUserName, setNewUserName] = useState('');
-
-  const peerRef = useRef(null);
-  const localVideoRef = useRef(null);
-  const remoteVideoRef = useRef(null);
-  const isRemoteDescriptionSet = useRef(false);
-  const candidateQueueRef = useRef([]);
-  const callTimerRef = useRef(null);
-
-  // Extended user list with more details for chat-like interface
-  const [users, setUsers] = useState([
-    { 
-      id: 'user1@example.com', 
-      name: 'John Doe', 
-      email: 'user1@example.com',
-      status: 'online', 
-      avatar: 'JD',
-      lastSeen: 'Active now'
-    },
-    { 
-      id: 'user2@example.com', 
-      name: 'Jane Smith', 
-      email: 'user2@example.com',
-      status: 'online', 
-      avatar: 'JS',
-      lastSeen: 'Active 5m ago'
-    },
-    { 
-      id: 'user3@example.com', 
-      name: 'Mike Johnson', 
-      email: 'user3@example.com',
-      status: 'away', 
-      avatar: 'MJ',
-      lastSeen: 'Active 1h ago'
-    },
-    { 
-      id: 'user4@example.com', 
-      name: 'Sarah Wilson', 
-      email: 'user4@example.com',
-      status: 'offline', 
-      avatar: 'SW',
-      lastSeen: 'Active 2d ago'
-    },
-    { 
-      id: 'user5@example.com', 
-      name: 'Alex Brown', 
-      email: 'user5@example.com',
-      status: 'online', 
-      avatar: 'AB',
-      lastSeen: 'Active now'
-    }
-  ]);
-
-  // State for incoming call modal
-  const [incomingCall, setIncomingCall] = useState(null); // { from, offer } or null
-
-  // Function to generate avatar from name
-  const generateAvatar = (name) => {
-    const words = name.trim().split(' ');
-    if (words.length >= 2) {
-      return (words[0][0] + words[1][0]).toUpperCase();
-    }
-    return name.substring(0, 2).toUpperCase();
-  };
-
-  // Function to add new user
-  const addNewUser = () => {
-    if (!newUserEmail.trim() || !newUserName.trim()) {
-      alert('Please enter both email and name');
-      return;
-    }
-
-    // Check if user already exists
-    if (users.some(user => user.email.toLowerCase() === newUserEmail.toLowerCase())) {
-      alert('User with this email already exists');
-      return;
-    }
-
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(newUserEmail)) {
-      alert('Please enter a valid email address');
-      return;
-    }
-
-    const newUser = {
-      id: newUserEmail.toLowerCase(),
-      name: newUserName.trim(),
-      email: newUserEmail.toLowerCase(),
-      status: 'offline', // Default status for new users
-      avatar: generateAvatar(newUserName),
-      lastSeen: 'Never'
-    };
-
-    setUsers(prev => [...prev, newUser]);
-    setNewUserEmail('');
-    setNewUserName('');
-    setShowAddUserModal(false);
-  };
-
-  // Call timer effect
+  // Load data from localStorage on mount
   useEffect(() => {
-    if (isCallActive) {
-      callTimerRef.current = setInterval(() => {
-        setCallDuration(prev => prev + 1);
-      }, 1000);
-    } else {
-      if (callTimerRef.current) {
-        clearInterval(callTimerRef.current);
-        callTimerRef.current = null;
+    if (!currentUser) return;
+
+    const savedChats = localStorage.getItem(`chats_${currentUser}`);
+    const savedUsers = localStorage.getItem(`users_${currentUser}`);
+
+    if (savedChats) {
+      try {
+        setChats(JSON.parse(savedChats));
+      } catch (e) {
+        console.error("Error loading chats:", e);
       }
-      setCallDuration(0);
     }
 
-    return () => {
-      if (callTimerRef.current) {
-        clearInterval(callTimerRef.current);
+    if (savedUsers) {
+      try {
+        const parsed = JSON.parse(savedUsers);
+        setAvailableUsers([...new Set([...initialUsers, ...parsed])]);
+      } catch (e) {
+        console.error("Error loading users:", e);
       }
-    };
-  }, [isCallActive]);
+    }
+  }, [currentUser]);
 
+  // Save chats to localStorage whenever they change
   useEffect(() => {
-    initCall();
+    if (!currentUser || Object.keys(chats).length === 0) return;
+    localStorage.setItem(`chats_${currentUser}`, JSON.stringify(chats));
+  }, [chats, currentUser]);
+
+  // Save users to localStorage whenever they change
+  useEffect(() => {
+    if (!currentUser) return;
+    const customUsers = availableUsers.filter(u => !initialUsers.includes(u));
+    localStorage.setItem(`users_${currentUser}`, JSON.stringify(customUsers));
+  }, [availableUsers, currentUser]);
+
+  // Socket setup
+  useEffect(() => {
+    if (!currentUser) return;
+
+    socket.connect();
+    socket.emit("register", currentUser);
+
+    socket.on("receive-message", (data) => {
+      setChats((prev) => ({
+        ...prev,
+        [data.from]: [
+          ...(prev[data.from] || []),
+          { text: data.message, type: 'received', from: data.from, timestamp: Date.now(), read: false }
+        ]
+      }));
+      
+      // Show typing indicator briefly
+      setIsTyping(true);
+      setTimeout(() => setIsTyping(false), 1000);
+    });
 
     return () => {
       socket.disconnect();
-      if (peerRef.current) {
-        peerRef.current.close();
-        peerRef.current = null;
-      }
-      if (callTimerRef.current) {
-        clearInterval(callTimerRef.current);
-      }
     };
-  }, []);
+  }, [currentUser]);
 
+  // Auto-scroll to bottom
   useEffect(() => {
-    if (localVideoRef.current && localStream) {
-      localVideoRef.current.srcObject = localStream;
-    }
-  }, [localStream]);
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chats, selectedRecipient]);
 
+  // Mark messages as read when opening a chat
   useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      remoteVideoRef.current.srcObject = remoteStream;
-      setIsCallActive(true);
-      console.log('[Remote] Video stream set', remoteStream);
+    if (selectedRecipient && chats[selectedRecipient]) {
+      setChats(prev => ({
+        ...prev,
+        [selectedRecipient]: prev[selectedRecipient].map(msg => ({ ...msg, read: true }))
+      }));
     }
-  }, [remoteStream]);
+  }, [selectedRecipient]);
 
-  const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  // Default recipient selection
+  useEffect(() => {
+    const otherUsers = availableUsers.filter((u) => u !== currentUser);
+    if (!selectedRecipient && otherUsers.length > 0) {
+      setSelectedRecipient(otherUsers[0]);
+    }
+  }, [currentUser, availableUsers, selectedRecipient]);
+
+  const sendMessage = () => {
+    if (!message.trim() || !selectedRecipient) return;
+
+    socket.emit("send-message", {
+      to: selectedRecipient,
+      message,
+    });
+
+    setChats((prev) => ({
+      ...prev,
+      [selectedRecipient]: [
+        ...(prev[selectedRecipient] || []),
+        { text: message, type: 'sent', to: selectedRecipient, timestamp: Date.now(), read: true }
+      ]
+    }));
+
+    setMessage("");
   };
 
-  const stopCall = () => {
-    try {
-      // Stop all tracks
-      if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-      }
-      if (remoteStream) {
-        remoteStream.getTracks().forEach(track => track.stop());
-      }
-
-      // Close peer connection
-      if (peerRef.current) {
-        peerRef.current.close();
-        peerRef.current = null;
-      }
-
-      // Stop timer
-      if (callTimerRef.current) {
-        clearInterval(callTimerRef.current);
-        callTimerRef.current = null;
-      }
-
-      // Emit call end event
-      socket.emit('call-ended', { to: targetUser, from: userId });
-
-      // Reset states
-      setIsCallActive(false);
-      setCallDuration(0);
-      setLocalStream(null);
-      setRemoteStream(null);
-      setTargetUser('');
-
-      // Refresh the page after a short delay
-      setTimeout(() => {
-        window.location.reload();
-      }, 500);
-    } catch (err) {
-      console.error('[StopCall] Error:', err);
-      // Force refresh even if there's an error
-      window.location.reload();
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
     }
   };
 
-  const toggleVideo = () => {
-    if (localStream) {
-      const videoTrack = localStream.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled;
-        setIsVideoEnabled(videoTrack.enabled);
-      }
-    }
-  };
-
-  const toggleAudio = () => {
-    if (localStream) {
-      const audioTrack = localStream.getAudioTracks()[0];
-      if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled;
-        setIsAudioEnabled(audioTrack.enabled);
-      }
-    }
-  };
-
-  const initCall = async () => {
-    try {
-      socket.connect();
-      console.log('[Socket] Connected:', socket.id);
-      socket.emit('register', userId);
-      console.log('[Socket] Register emitted for:', userId);
-
-      const stream = await getLocalStream();
-      console.log('[Media] Got local stream:', stream);
-      setLocalStream(stream);
-
-      const peer = createPeerConnection(
-        (candidate) => {
-          console.log('[ICE] Local candidate generated:', candidate);
-          if (isRemoteDescriptionSet.current) {
-            socket.emit('ice-candidate', {
-              to: targetUser || '',
-              candidate,
-              from: userId,
-            });
-            console.log('[ICE] Candidate sent to', targetUser);
-          } else {
-            console.log('[ICE] Remote not ready, candidate queued');
-          }
-        },
-        (remote) => {
-          console.log('[Peer] Remote stream received');
-          setRemoteStream(remote);
-        }
-      );
-
-      peerRef.current = peer;
-      addLocalTracks(peer, stream);
-      console.log('[Peer] Local tracks added');
-
-      // Incoming offer
-      socket.on('offer', async (data) => {
-        console.log('[Socket] Offer received:', data);
-        setIncomingCall({ from: data.from, offer: data.offer });
-      });
-
-      // Incoming answer
-      socket.on('answer', async (data) => {
-        console.log('[Socket] Answer received:', data);
-        await handleAnswer(peerRef.current, data.answer);
-        console.log('[Peer] Remote description (answer) set');
-      });
-
-      // Incoming ICE
-      socket.on('ice-candidate', async (data) => {
-        console.log('[Socket] ICE candidate received:', data);
-        if (!isRemoteDescriptionSet.current) {
-          console.log('[ICE] Remote not ready, candidate queued');
-          candidateQueueRef.current.push(data.candidate);
-        } else {
-          try {
-            await handleICECandidate(peerRef.current, data.candidate);
-            console.log('[ICE] Candidate added to peer');
-          } catch (e) {
-            console.error('[ICE] Error adding ICE candidate:', e);
-          }
-        }
-      });
-
-      // Handle call ended by remote user
-      socket.on('call-ended', () => {
-        console.log('[Socket] Call ended by remote user');
-        stopCall();
-      });
-
-    } catch (err) {
-      console.error('[Init] Error during initCall:', err);
-      alert('Microphone or camera access is required.');
-    }
-  };
-
-  // Accept incoming call
-  const acceptCall = async () => {
-    if (!incomingCall || !peerRef.current) return;
-
-    try {
-      await handleOffer(peerRef.current, incomingCall.offer);
-      console.log('[Peer] Remote description (offer) set');
-      isRemoteDescriptionSet.current = true;
-
-      for (const c of candidateQueueRef.current) {
-        try {
-          await peerRef.current.addIceCandidate(c);
-          console.log('[ICE] Queued ICE added');
-        } catch (e) {
-          console.error('[ICE] Failed to add queued ICE', e);
-        }
-      }
-      candidateQueueRef.current = [];
-
-      const answer = await createAnswer(peerRef.current);
-      console.log('[Peer] Answer created:', answer);
-      socket.emit('answer', { to: incomingCall.from, answer, from: userId });
-      console.log('[Socket] Answer sent to', incomingCall.from);
-      
-      setTargetUser(incomingCall.from);
-    } catch (err) {
-      console.error('[AcceptCall] Error:', err);
-    }
-
-    setIncomingCall(null);
-  };
-
-  // Reject incoming call
-  const rejectCall = () => {
-    setIncomingCall(null);
-    // Send reject event to caller
-    socket.emit('call-rejected', { to: incomingCall.from, from: userId });
-  };
-
-  const startCall = async (userToCall) => {
-    if (!peerRef.current) {
-      console.warn('[StartCall] Peer not ready');
+  const handleAddUser = () => {
+    setAddUserError("");
+    
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(newUserEmail)) {
+      setAddUserError("Please enter a valid email address");
       return;
     }
 
-    setTargetUser(userToCall);
-    const offer = await createOffer(peerRef.current);
-    console.log('[Peer] Offer created:', offer);
-    socket.emit('offer', { to: userToCall, offer, from: userId });
-    console.log('[Socket] Offer sent to', userToCall);
+    if (availableUsers.includes(newUserEmail)) {
+      setAddUserError("User already exists in your contacts");
+      return;
+    }
+
+    if (newUserEmail === currentUser) {
+      setAddUserError("You cannot add yourself as a contact");
+      return;
+    }
+
+    setAvailableUsers(prev => [...prev, newUserEmail]);
+    setNewUserEmail("");
+    setShowAddUser(false);
+    setAddUserError("");
   };
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'online': return 'bg-green-500';
-      case 'away': return 'bg-yellow-500';
-      case 'offline': return 'bg-gray-400';
-      default: return 'bg-gray-400';
+  const handleDeleteChat = (user) => {
+    setChats(prev => {
+      const newChats = { ...prev };
+      delete newChats[user];
+      return newChats;
+    });
+    setShowDeleteConfirm(null);
+    if (selectedRecipient === user) {
+      const otherUsers = availableUsers.filter(u => u !== currentUser && u !== user);
+      setSelectedRecipient(otherUsers[0] || "");
     }
   };
 
-  const getSelectedUser = () => {
-    return users.find(user => user.id === targetUser);
+  const handleRemoveContact = (user) => {
+    setAvailableUsers(prev => prev.filter(u => u !== user));
+    handleDeleteChat(user);
   };
 
+  const clearAllChats = () => {
+    if (window.confirm("Are you sure you want to clear all chats? This cannot be undone.")) {
+      setChats({});
+      localStorage.removeItem(`chats_${currentUser}`);
+    }
+  };
+
+  const exportChats = () => {
+    const dataStr = JSON.stringify(chats, null, 2);
+    const dataBlob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(dataBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `chat-backup-${Date.now()}.json`;
+    link.click();
+  };
+
+  const currentChat = chats[selectedRecipient] || [];
+  const filteredUsers = availableUsers
+    .filter(u => u !== currentUser)
+    .filter(u => u.toLowerCase().includes(searchQuery.toLowerCase()));
+
+  const getUnreadCount = (user) => {
+    if (!chats[user]) return 0;
+    return chats[user].filter(msg => !msg.read && msg.type === 'received').length;
+  };
+
+  const totalUnread = availableUsers.reduce((acc, user) => acc + getUnreadCount(user), 0);
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
-      <div className="flex h-screen">
-        {/* Sidebar - User List */}
-        <div className="w-80 bg-white shadow-lg border-r border-gray-200 flex flex-col">
+    <div className="h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-6xl h-[90vh] bg-white rounded-2xl shadow-2xl overflow-hidden flex border border-gray-200">
+        
+        {/* Sidebar */}
+        <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
           {/* Sidebar Header */}
-          <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-blue-600 to-blue-700">
-            <h1 className="text-xl font-bold text-white mb-1">Video Calls</h1>
-            <p className="text-blue-100 text-sm">Connected as: {userId}</p>
-          </div>
-
-          {/* Add User Button */}
-          <div className="p-4 border-b border-gray-200">
-            <button
-              onClick={() => setShowAddUserModal(true)}
-              className="w-full bg-gradient-to-r from-green-500 to-green-600 text-white py-2 px-4 rounded-lg hover:from-green-600 hover:to-green-700 transition-all duration-200 shadow-md hover:shadow-lg flex items-center justify-center gap-2"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-              </svg>
-              Add New Contact
-            </button>
-          </div>
-
-          {/* User List */}
-          <div className="flex-1 overflow-y-auto">
-            <div className="p-4">
-              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-                Contacts ({users.filter(u => u.id !== userId).length})
-              </h2>
-              <div className="space-y-2">
-                {users
-                  .filter(user => user.id !== userId)
-                  .map((user) => (
-                    <div
-                      key={user.id}
-                      className={`p-4 rounded-xl transition-all duration-200 cursor-pointer border-2 ${
-                        targetUser === user.id
-                          ? 'bg-blue-50 border-blue-200 shadow-md'
-                          : 'bg-gray-50 border-transparent hover:bg-gray-100 hover:shadow-sm'
-                      }`}
-                      onClick={() => !isCallActive && setTargetUser(user.id)}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center space-x-3">
-                          {/* Avatar */}
-                          <div className="relative">
-                            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-blue-600 rounded-full flex items-center justify-center text-white font-semibold text-sm">
-                              {user.avatar}
-                            </div>
-                            <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-white ${getStatusColor(user.status)}`}></div>
-                          </div>
-                          
-                          {/* User Info */}
-                          <div className="flex-1 min-w-0">
-                            <p className="font-semibold text-gray-900 truncate">{user.name}</p>
-                            <p className="text-sm text-gray-500 truncate">{user.email}</p>
-                          </div>
-                        </div>
-
-                        {/* Status Badge */}
-                        <div className={`px-2 py-1 rounded-full text-xs font-medium ${
-                          user.status === 'online' ? 'bg-green-100 text-green-800' :
-                          user.status === 'away' ? 'bg-yellow-100 text-yellow-800' :
-                          'bg-gray-100 text-gray-600'
-                        }`}>
-                          {user.status}
-                        </div>
-                      </div>
-                      
-                      {/* Last Seen and Call Button */}
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm text-gray-500 truncate">{user.lastSeen}</p>
-                        
-                        {/* Call Button */}
-                        {!isCallActive && targetUser === user.id && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              startCall(user.id);
-                            }}
-                            className="bg-gradient-to-r from-green-500 to-green-600 text-white p-2 rounded-lg hover:from-green-600 hover:to-green-700 transition-all duration-200 shadow-md hover:shadow-lg"
-                            title="Start video call"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                            </svg>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Main Content */}
-        <div className="flex-1 flex flex-col">
-          {/* Header */}
-          <div className="bg-white shadow-sm border-b border-gray-200 p-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-4">
-                {getSelectedUser() && (
-                  <>
-                    <div className="relative">
-                      <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-blue-600 rounded-full flex items-center justify-center text-white font-semibold text-sm">
-                        {getSelectedUser().avatar}
-                      </div>
-                      <div className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${getStatusColor(getSelectedUser().status)}`}></div>
-                    </div>
-                    <div>
-                      <h2 className="text-xl font-semibold text-gray-800">{getSelectedUser().name}</h2>
-                      <p className="text-sm text-gray-500">{getSelectedUser().email}</p>
-                    </div>
-                  </>
-                )}
-                {!getSelectedUser() && (
-                  <div>
-                    <h2 className="text-xl font-semibold text-gray-800">Select a contact to call</h2>
-                    <p className="text-sm text-gray-500">Choose someone from the sidebar to start a video call</p>
-                  </div>
-                )}
-              </div>
-
-              {isCallActive && (
-                <div className="flex items-center space-x-4">
-                  <span className="inline-flex items-center px-4 py-2 rounded-full text-sm font-medium bg-green-100 text-green-800">
-                    <div className="w-2 h-2 bg-green-400 rounded-full mr-2 animate-pulse"></div>
-                    {formatTime(callDuration)}
-                  </span>
+          <div className="p-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center font-semibold text-lg">
+                  {currentUser.charAt(0).toUpperCase()}
                 </div>
-              )}
+                <div>
+                  <h2 className="font-semibold text-sm">Messages</h2>
+                  <p className="text-xs text-blue-100">{currentUser.split('@')[0]}</p>
+                </div>
+              </div>
+              <div className="flex space-x-2">
+                <button
+                  onClick={() => setShowAddUser(true)}
+                  className="p-2 bg-white/20 backdrop-blur-sm rounded-lg hover:bg-white/30 transition-all duration-200"
+                  title="Add contact"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setShowSettings(true)}
+                  className="p-2 bg-white/20 backdrop-blur-sm rounded-lg hover:bg-white/30 transition-all duration-200"
+                  title="Settings"
+                >
+                  <Settings className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            
+            {/* Search Bar */}
+            <div className="relative">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-blue-200" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search contacts..."
+                className="w-full pl-10 pr-4 py-2 bg-white/20 backdrop-blur-sm border border-white/30 rounded-lg text-white placeholder-blue-200 focus:outline-none focus:ring-2 focus:ring-white/50 text-sm"
+              />
             </div>
           </div>
 
-          {/* Call Controls */}
-          {(isCallActive || localStream) && (
-            <div className="bg-white border-b border-gray-200 p-4">
-              <div className="flex justify-center items-center gap-4 flex-wrap">
-                <button
-                  onClick={toggleVideo}
-                  className={`flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-all duration-200 ${
-                    isVideoEnabled 
-                      ? 'bg-gray-100 text-gray-700 hover:bg-gray-200' 
-                      : 'bg-red-100 text-red-700 hover:bg-red-200'
-                  }`}
-                  title={isVideoEnabled ? 'Turn off camera' : 'Turn on camera'}
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    {isVideoEnabled ? (
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                    ) : (
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728L5.636 5.636m12.728 12.728L18.364 5.636M5.636 18.364l12.728-12.728" />
-                    )}
-                  </svg>
-                  {isVideoEnabled ? 'Camera On' : 'Camera Off'}
+          {/* Add User Modal */}
+          {showAddUser && (
+            <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-gray-200">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-gray-800 text-sm">Add New Contact</h3>
+                <button onClick={() => { setShowAddUser(false); setNewUserEmail(""); setAddUserError(""); }}>
+                  <X className="w-4 h-4 text-gray-500 hover:text-gray-700" />
                 </button>
-
+              </div>
+              <div className="space-y-2">
+                <input
+                  type="email"
+                  value={newUserEmail}
+                  onChange={(e) => setNewUserEmail(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleAddUser()}
+                  placeholder="Enter email address"
+                  className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                  autoFocus
+                />
+                {addUserError && (
+                  <p className="text-red-500 text-xs flex items-center space-x-1">
+                    <span>⚠️</span>
+                    <span>{addUserError}</span>
+                  </p>
+                )}
                 <button
-                  onClick={toggleAudio}
-                  className={`flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-all duration-200 ${
-                    isAudioEnabled 
-                      ? 'bg-gray-100 text-gray-700 hover:bg-gray-200' 
-                      : 'bg-red-100 text-red-700 hover:bg-red-200'
-                  }`}
-                  title={isAudioEnabled ? 'Mute microphone' : 'Unmute microphone'}
+                  onClick={handleAddUser}
+                  className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-2.5 px-4 rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all text-sm font-medium"
                 >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    {isAudioEnabled ? (
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                    ) : (
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                    )}
-                  </svg>
-                  {isAudioEnabled ? 'Mic On' : 'Mic Off'}
-                </button>
-
-                <button
-                  onClick={stopCall}
-                  className="flex items-center gap-2 bg-gradient-to-r from-red-600 to-red-700 text-white px-8 py-3 rounded-lg hover:from-red-700 hover:to-red-800 transition-all duration-200 shadow-md hover:shadow-lg font-medium"
-                  title="End call"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 3l1.664 1.664M21 21l-1.5-1.5M21 21l-18-18" />
-                  </svg>
-                  End Call
+                  Add Contact
                 </button>
               </div>
             </div>
           )}
 
-          {/* Video Section */}
-          <div className="flex-1 p-6">
-            {localStream ? (
-              <div className="grid lg:grid-cols-2 gap-6 h-full">
-                {/* Local Video */}
-                <div className="bg-white rounded-xl shadow-lg overflow-hidden h-full">
-                  <div className="bg-gradient-to-r from-green-500 to-green-600 px-6 py-4">
-                    <h3 className="text-lg font-semibold text-white flex items-center">
-                      <div className="w-3 h-3 bg-green-300 rounded-full mr-3 animate-pulse"></div>
-                      You (Local)
-                      {!isVideoEnabled && (
-                        <span className="ml-2 text-sm bg-red-500 bg-opacity-30 px-2 py-1 rounded">
-                          Camera Off
-                        </span>
-                      )}
-                      {!isAudioEnabled && (
-                        <span className="ml-2 text-sm bg-red-500 bg-opacity-30 px-2 py-1 rounded">
-                          Muted
-                        </span>
-                      )}
-                    </h3>
-                  </div>
-                  <div className="p-6 h-full">
-                    <div className="relative h-full">
-                      <video
-                        ref={localVideoRef}
-                        autoPlay
-                        muted
-                        playsInline
-                        className="w-full h-full object-cover bg-gray-900 rounded-lg shadow-inner"
-                      />
-                      {!isVideoEnabled && localStream && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-gray-900 rounded-lg">
-                          <div className="text-white text-center">
-                            <div className="w-16 h-16 bg-gray-700 rounded-full flex items-center justify-center mx-auto mb-4">
-                              <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
-                              </svg>
+          {/* Settings Panel */}
+          {showSettings && (
+            <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-gray-200">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-gray-800 text-sm">Settings</h3>
+                <button onClick={() => setShowSettings(false)}>
+                  <X className="w-4 h-4 text-gray-500 hover:text-gray-700" />
+                </button>
+              </div>
+              <div className="space-y-2">
+                <button
+                  onClick={exportChats}
+                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-white rounded-lg transition-colors flex items-center space-x-2"
+                >
+                  <Archive className="w-4 h-4" />
+                  <span>Export Chats</span>
+                </button>
+                <button
+                  onClick={clearAllChats}
+                  className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors flex items-center space-x-2"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Clear All Chats</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* User List */}
+          <div className="flex-1 overflow-y-auto">
+            <div className="p-3">
+              <div className="flex items-center justify-between mb-2 px-1">
+                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider flex items-center space-x-2">
+                  <Users className="w-3 h-3" />
+                  <span>Contacts ({filteredUsers.length})</span>
+                </h3>
+                {totalUnread > 0 && (
+                  <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                    {totalUnread}
+                  </span>
+                )}
+              </div>
+              
+              {filteredUsers.length === 0 ? (
+                <div className="text-center py-12">
+                  <Users className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-500 text-sm font-medium">No contacts found</p>
+                  <p className="text-gray-400 text-xs mt-1">
+                    {searchQuery ? "Try a different search" : "Add someone to start chatting"}
+                  </p>
+                </div>
+              ) : (
+                filteredUsers.map((user) => {
+                  const hasMessages = chats[user]?.length > 0;
+                  const lastMessage = hasMessages ? chats[user][chats[user].length - 1] : null;
+                  const unreadCount = getUnreadCount(user);
+                  
+                  return (
+                    <div
+                      key={user}
+                      className={`group relative p-3 rounded-xl cursor-pointer transition-all duration-200 mb-2 ${
+                        selectedRecipient === user
+                          ? 'bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 shadow-sm'
+                          : 'bg-gray-50 hover:bg-gray-100 border-2 border-transparent'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3" onClick={() => setSelectedRecipient(user)}>
+                        <div className="relative">
+                          <div className="w-11 h-11 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-semibold shadow-md">
+                            {user.charAt(0).toUpperCase()}
+                          </div>
+                          {unreadCount > 0 && (
+                            <div className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center shadow-md">
+                              {unreadCount}
                             </div>
-                            <p>Camera is off</p>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-gray-900 truncate">
+                            {user.split('@')[0]}
+                          </p>
+                          <p className="text-xs text-gray-500 truncate">
+                            {lastMessage ? 
+                              <span className={unreadCount > 0 ? 'font-semibold text-gray-700' : ''}>
+                                {lastMessage.type === 'sent' ? `You: ${lastMessage.text}` : lastMessage.text}
+                              </span>
+                              : 'No messages yet'
+                            }
+                          </p>
+                        </div>
+                      </div>
+                      
+                      {/* Context Menu */}
+                      <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowDeleteConfirm(user);
+                          }}
+                          className="p-1.5 bg-white rounded-lg shadow-md hover:bg-red-50 transition-colors"
+                        >
+                          <MoreVertical className="w-3.5 h-3.5 text-gray-600" />
+                        </button>
+                      </div>
+
+                      {/* Delete Confirmation */}
+                      {showDeleteConfirm === user && (
+                        <div className="absolute inset-0 bg-white rounded-xl border-2 border-red-200 p-3 shadow-lg z-10">
+                          <p className="text-xs font-medium text-gray-800 mb-2">Delete this chat?</p>
+                          <div className="flex space-x-2">
+                            <button
+                              onClick={() => handleDeleteChat(user)}
+                              className="flex-1 bg-red-500 text-white py-1.5 px-2 rounded-lg hover:bg-red-600 text-xs font-medium"
+                            >
+                              Delete Chat
+                            </button>
+                            <button
+                              onClick={() => handleRemoveContact(user)}
+                              className="flex-1 bg-red-600 text-white py-1.5 px-2 rounded-lg hover:bg-red-700 text-xs font-medium"
+                            >
+                              Remove
+                            </button>
+                            <button
+                              onClick={() => setShowDeleteConfirm(null)}
+                              className="px-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-xs"
+                            >
+                              ✕
+                            </button>
                           </div>
                         </div>
                       )}
                     </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Main Chat Area */}
+        <div className="flex-1 flex flex-col bg-gray-50">
+          {/* Chat Header */}
+          {selectedRecipient ? (
+            <div className="bg-white border-b border-gray-200 p-4 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-11 h-11 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-semibold shadow-md">
+                    {selectedRecipient.charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold text-gray-900">
+                      {selectedRecipient.split('@')[0]}
+                    </h2>
+                    <p className="text-xs text-gray-500">{selectedRecipient}</p>
                   </div>
                 </div>
+                <div className="text-xs text-gray-500">
+                  {currentChat.length} messages
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white border-b border-gray-200 p-4 shadow-sm">
+              <h2 className="text-lg font-semibold text-gray-400">Select a conversation</h2>
+            </div>
+          )}
 
-                {/* Remote Video */}
-                <div className="bg-white rounded-xl shadow-lg overflow-hidden h-full">
-                  <div className="bg-gradient-to-r from-purple-500 to-purple-600 px-6 py-4">
-                    <h3 className="text-lg font-semibold text-white flex items-center">
-                      <div className={`w-3 h-3 rounded-full mr-3 ${remoteStream ? 'bg-purple-300 animate-pulse' : 'bg-gray-400'}`}></div>
-                      {getSelectedUser() ? getSelectedUser().name : 'Remote User'}
-                    </h3>
+          {/* Messages Area */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {!selectedRecipient ? (
+              <div className="h-full flex items-center justify-center">
+                <div className="text-center">
+                  <div className="w-24 h-24 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Send className="w-12 h-12 text-blue-500" />
                   </div>
-                  <div className="p-6 h-full">
-                    <div className="relative h-full">
-                      <video
-                        ref={remoteVideoRef}
-                        autoPlay
-                        playsInline
-                        className="w-full h-full object-cover bg-gray-900 rounded-lg shadow-inner"
-                      />
-                      {!remoteStream && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-gray-900 rounded-lg">
-                          <div className="text-gray-400 text-center">
-                            <div className="w-16 h-16 bg-gray-700 rounded-full flex items-center justify-center mx-auto mb-4">
-                              <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
-                              </svg>
-                            </div>
-                            <p>Waiting for remote user...</p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                  <h3 className="text-xl font-semibold text-gray-700 mb-2">Welcome to Chat</h3>
+                  <p className="text-gray-500 text-sm">Select a contact to start messaging</p>
+                </div>
+              </div>
+            ) : currentChat.length === 0 ? (
+              <div className="h-full flex items-center justify-center">
+                <div className="text-center">
+                  <div className="w-20 h-20 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <span className="text-3xl">💬</span>
                   </div>
+                  <p className="text-gray-500 text-sm">
+                    No messages with <span className="font-semibold">{selectedRecipient.split('@')[0]}</span> yet
+                  </p>
+                  <p className="text-gray-400 text-xs mt-1">Send a message to start the conversation</p>
                 </div>
               </div>
             ) : (
-              <div className="flex items-center justify-center h-full">
-                <div className="text-center">
-                  <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                  <p className="text-gray-600 text-lg">Setting up your camera and microphone...</p>
-                </div>
-              </div>
+              <>
+                {currentChat.map((msg, i) => (
+                  <div
+                    key={i}
+                    className={`flex ${msg.type === 'sent' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}
+                  >
+                    <div
+                      className={`max-w-xs lg:max-w-md px-4 py-2.5 rounded-2xl shadow-md ${
+                        msg.type === 'sent'
+                          ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-br-sm'
+                          : 'bg-white text-gray-800 border border-gray-200 rounded-bl-sm'
+                      }`}
+                    >
+                      <p className="text-sm leading-relaxed break-words">{msg.text}</p>
+                      <div className="flex items-center justify-end space-x-1 mt-1">
+                        <p className={`text-xs ${msg.type === 'sent' ? 'text-blue-100' : 'text-gray-400'}`}>
+                          {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                        {msg.type === 'sent' && (
+                          <span className="text-blue-100 text-xs">✓</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {isTyping && (
+                  <div className="flex justify-start">
+                    <div className="bg-white border border-gray-200 px-4 py-3 rounded-2xl rounded-bl-sm shadow-md">
+                      <div className="flex space-x-1">
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div ref={chatEndRef} />
+              </>
+            )}
+          </div>
+
+          {/* Message Input */}
+          <div className="bg-white border-t border-gray-200 p-4">
+            <div className="flex space-x-3 items-end">
+              <textarea
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                onKeyPress={handleKeyPress}
+                placeholder={selectedRecipient ? "Type a message..." : "Select a contact first..."}
+                disabled={!selectedRecipient}
+                rows="1"
+                className="flex-1 p-3 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 outline-none disabled:bg-gray-100 disabled:cursor-not-allowed resize-none text-sm"
+                style={{ minHeight: '44px', maxHeight: '120px' }}
+              />
+              <button
+                onClick={sendMessage}
+                disabled={!message.trim() || !selectedRecipient}
+                className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white p-3 rounded-2xl hover:from-blue-600 hover:to-indigo-700 focus:ring-2 focus:ring-blue-500 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
+              >
+                <Send className="w-5 h-5" />
+              </button>
+            </div>
+            {selectedRecipient && (
+              <p className="text-xs text-gray-400 mt-2 text-center">
+                Press Enter to send • Shift + Enter for new line
+              </p>
             )}
           </div>
         </div>
       </div>
-
-      {/* Add User Modal */}
-      {showAddUserModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 w-full max-w-md mx-4">
-            <h3 className="text-lg font-semibold text-gray-800 mb-4">Add New Contact</h3>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Full Name
-                </label>
-                <input
-                  type="text"
-                  value={newUserName}
-                  onChange={(e) => setNewUserName(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Enter full name"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Email Address
-                </label>
-                <input
-                  type="email"
-                  value={newUserEmail}
-                  onChange={(e) => setNewUserEmail(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Enter email address"
-                />
-              </div>
-            </div>
-            
-            <div className="flex justify-end space-x-3 mt-6">
-              <button
-                onClick={() => setShowAddUserModal(false)}
-                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={addNewUser}
-                className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-6 py-2 rounded-lg hover:from-blue-600 hover:to-blue-700 transition-all duration-200 shadow-md hover:shadow-lg"
-              >
-                Add Contact
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Incoming Call Modal */}
-      {incomingCall && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 w-full max-w-md mx-4">
-            <div className="text-center">
-              <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-blue-600 rounded-full flex items-center justify-center text-white font-semibold text-xl mx-auto mb-4">
-                {users.find(u => u.id === incomingCall.from)?.avatar || 'U'}
-              </div>
-              
-              <h3 className="text-xl font-semibold text-gray-800 mb-2">
-                Incoming Call
-              </h3>
-              
-              <p className="text-gray-600 mb-6">
-                {users.find(u => u.id === incomingCall.from)?.name || incomingCall.from} is calling you
-              </p>
-              
-              <div className="flex justify-center space-x-4">
-                <button
-                  onClick={rejectCall}
-                  className="bg-gradient-to-r from-red-500 to-red-600 text-white px-6 py-3 rounded-lg hover:from-red-600 hover:to-red-700 transition-all duration-200 shadow-md hover:shadow-lg flex items-center gap-2"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 3l1.664 1.664M21 21l-1.5-1.5M21 21l-18-18" />
-                  </svg>
-                  Decline
-                </button>
-                
-                <button
-                  onClick={acceptCall}
-                  className="bg-gradient-to-r from-green-500 to-green-600 text-white px-6 py-3 rounded-lg hover:from-green-600 hover:to-green-700 transition-all duration-200 shadow-md hover:shadow-lg flex items-center gap-2"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                  </svg>
-                  Accept
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
