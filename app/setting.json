@@ -1,0 +1,30 @@
+{
+    "editor.formatOnType": false,
+    "editor.formatOnSave": false,
+    "editor.formatOnPaste": false,
+
+    "editor.defaultFormatter": null,
+
+    "javascript.format.enable": false,
+    "typescript.format.enable": false,
+    "html.format.enable": false,
+
+    "editor.codeActionsOnSave": {},
+
+    "editor.autoClosingBrackets": "never",
+    "editor.autoClosingQuotes": "never",
+
+    "html.autoClosingTags": false,
+    "javascript.autoClosingTags": false,
+    "typescript.autoClosingTags": false,
+
+    "emmet.triggerExpansionOnTab": false "editor.autoIndent": "none",
+    "editor.formatOnType": false,
+    "editor.formatOnSave": false,
+    "editor.formatOnPaste": false,
+
+    "editor.detectIndentation": false,
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true
+
+}
